@@ -1,0 +1,32 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "C_Cpp.default.includePath": [
+            "${workspaceFolder}/include",
+            "${workspaceFolder}/src",
+            "${workspaceFolder}/.pio/libdeps/esp32s3/lvgl",
+            "${workspaceFolder}/.pio/libdeps/esp32s3/Arduino_GFX_Library/src"
+        ],
+        "C_Cpp.default.defines": [
+            "LV_CONF_INCLUDE_SIMPLE"
+        ],
+        "C_Cpp.default.compilerPath": "",
+        "editor.rulers": [100],
+        "files.associations": {
+            "*.h": "c",
+            "*.c": "c",
+            "*.cpp": "cpp"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "platformio.platformio-ide",
+            "ms-vscode.cpptools",
+            "ms-vscode.cpptools-extension-pack"
+        ]
+    }
+}
