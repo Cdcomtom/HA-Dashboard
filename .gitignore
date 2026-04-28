@@ -1,0 +1,49 @@
+# ── PlatformIO build artefakty ──────────────────────────────────────────────
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ── VS Code ──────────────────────────────────────────────────────────────────
+.vscode/
+*.code-workspace
+
+# ── Secrets / credentials ────────────────────────────────────────────────────
+# Nikdy neukládej tokeny, hesla ani WiFi přihlašovací údaje do git!
+secrets.h
+credentials.h
+wifi_config.h
+
+# ── Kompilátorový výstup ─────────────────────────────────────────────────────
+*.o
+*.d
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+
+# ── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── Windows ──────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Linux ────────────────────────────────────────────────────────────────────
+*~
+.nfs*
+
+# ── Python (pokud používáš PlatformIO CLI přes venv) ────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+
+# ── Zálohy editorů ───────────────────────────────────────────────────────────
+*.bak
+*.swp
+*.orig
