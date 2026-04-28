@@ -107,6 +107,39 @@ static void ha_call_service(const char *service_path, const char *json_body) {
     Serial.printf("HA API: %s %s → %d\n", service_path, json_body, rc);
 }
 
+/* Refresh stavů světel přes HA REST API.
+ * Voláno po každém MQTT připojení — MQTT retain nemusí dodat stav světel
+ * která se od posledního připojení nezměnila. */
+static void refresh_light_states() {
+    if (!g_wifi_ok || !g_cfg.ha_url[0] || !g_cfg.ha_token[0]) return;
+    Serial.println("Refreshing light states via REST...");
+    bool *state_ptrs[CFG_MAX_LIGHTS] = {
+        &g_light_obyvak, &g_light_kuchyn, &g_light_pocitac,
+        &g_light_koupelna, &g_light_predsin, &g_light_zahrada
+    };
+    for (int i = 0; i < CFG_MAX_LIGHTS; i++) {
+        if (!g_cfg.light_entity[i][0]) continue;
+        HTTPClient http;
+        String url = String(g_cfg.ha_url) + "/api/states/" + g_cfg.light_entity[i];
+        http.begin(url);
+        http.setTimeout(3000);
+        http.addHeader("Authorization", String("Bearer ") + g_cfg.ha_token);
+        int rc = http.GET();
+        if (rc == 200) {
+            String body = http.getString();
+            JsonDocument doc;
+            if (!deserializeJson(doc, body)) {
+                const char *st = doc["state"] | "off";
+                *state_ptrs[i] = (strcmp(st, "on") == 0);
+                Serial.printf("  light[%d] %s = %s\n", i, g_cfg.light_entity[i], st);
+            }
+        } else {
+            Serial.printf("  light[%d] REST err %d\n", i, rc);
+        }
+        http.end();
+    }
+}
+
 static const char* wmo_to_condition(int code) {
     if (code == 0)               return "sunny";
     if (code <= 3)               return "partlycloudy";
@@ -350,6 +383,7 @@ static void mqtt_reconnect() {
         Serial.println("MQTT: connected");
         mqtt_client.subscribe((String(g_cfg.mqtt_base_topic) + "/#").c_str());
         g_mqtt_connected = true;
+        refresh_light_states();   /* dotáhni aktuální stavy — MQTT retain nestačí */
     } else {
         Serial.printf("MQTT: failed, rc=%d\n", mqtt_client.state());
         g_mqtt_connected = false;
