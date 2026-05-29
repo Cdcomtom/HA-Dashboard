@@ -38,7 +38,8 @@ extern "C" {
 
 /* === Sdílená data (definice) === */
 bool  g_wifi_ok        = false;
-bool  g_mqtt_connected = false;
+bool  g_mqtt_connected    = false;
+bool  g_weather_from_mqtt = false;  // true = pocasi prijato z MQTT
 bool  g_data_valid     = false;
 mqtt_publish_fn_t g_mqtt_publish = NULL;
 ha_call_fn_t      g_ha_call      = NULL;
@@ -164,6 +165,9 @@ static void refresh_states_from_rest() {
     }
 }
 
+/* Forward deklarace – definice je níže u MQTT sekce */
+static const char* weather_state_to_cz(const char* st);
+
 static const char* wmo_to_condition(int code) {
     if (code == 0)               return "sunny";
     if (code <= 3)               return "partlycloudy";
@@ -181,24 +185,69 @@ static void fetch_forecast_openmeteo() {
     if (!g_wifi_ok || !g_cfg.weather_lat[0] || !g_cfg.weather_lon[0]) return;
     HTTPClient http;
     /* Open-Meteo podporuje HTTP i HTTPS – použijeme HTTP (šetří ~150KB firmware) */
+    /* Přidáno: current=... → aktuální počasí se tak aktualizuje každých 30 min   */
+    /* Pozor: používáme weather_code (nový název) konzistentně pro current i daily */
     String url = String("http://api.open-meteo.com/v1/forecast?latitude=") +
                  g_cfg.weather_lat + "&longitude=" + g_cfg.weather_lon +
-                 "&daily=temperature_2m_max,temperature_2m_min,weathercode"
+                 "&current=temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,weather_code"
+                 "&daily=temperature_2m_max,temperature_2m_min,weather_code"
                  "&timezone=auto&forecast_days=7";
+    Serial.printf("Open-Meteo URL: %s\n", url.c_str());
     http.begin(url);
     http.setTimeout(8000);   /* max 8 s – nepozastaví loop na dlouho */
     int code = http.GET();
+    Serial.printf("Open-Meteo HTTP code: %d\n", code);
     if (code == 200) {
         String body = http.getString();
+        Serial.printf("Open-Meteo body len: %d\n", body.length());
         JsonDocument doc;
-        if (!deserializeJson(doc, body)) {
+        DeserializationError err = deserializeJson(doc, body);
+        if (err) {
+            Serial.printf("Open-Meteo JSON err: %s\n", err.c_str());
+        } else {
+
+            /* ── Aktuální počasí z Open-Meteo (aktualizuje se každých 30 min) ── */
+            /* Pokud MQTT běží, aktuální počasí bere z HA MQTT (přesnější).        */
+            /* Open-Meteo se použije jen jako záloha když MQTT není připojeno.     */
+            JsonObject cur = doc["current"];
+            if (!cur.isNull()) {
+                float t = cur["temperature_2m"]       | -999.0f;
+                float h = cur["relative_humidity_2m"]  | -1.0f;
+                float p = cur["surface_pressure"]      | -1.0f;
+                float w = cur["wind_speed_10m"]        | -1.0f;
+                int   wc = cur["weather_code"]         | -1;
+                if (!g_weather_from_mqtt) {
+                    /* MQTT není k dispozici – použij Open-Meteo jako zálohu */
+                    if (t > -999.0f)  g_weather_temp      = t;
+                    if (h >= 0.0f)    g_weather_humidity   = h;
+                    if (p >= 0.0f)    g_weather_pressure   = p;
+                    if (w >= 0.0f)    g_weather_wind       = w;
+                    if (wc >= 0) {
+                        const char* cond = wmo_to_condition(wc);
+                        strlcpy(g_weather_state,    cond,                      sizeof(g_weather_state));
+                        strlcpy(g_weather_state_cz, weather_state_to_cz(cond), sizeof(g_weather_state_cz));
+                    }
+                    Serial.printf("Open-Meteo current (MQTT off): %.1f°C  hum=%.0f%%  press=%.0fhPa  wind=%.1f km/h  wc=%d\n",
+                                  t, h, p, w, wc);
+                } else {
+                    Serial.printf("Open-Meteo current (ignorováno - MQTT aktivní): %.1f°C  wc=%d\n", t, wc);
+                }
+            } else {
+                Serial.println("Open-Meteo: 'current' block chybi v odpovedi");
+            }
+
+            /* ── Předpověď na 5 dní ── */
             JsonObject daily = doc["daily"];
             JsonArray tmax  = daily["temperature_2m_max"];
             JsonArray tmin  = daily["temperature_2m_min"];
-            JsonArray wcod  = daily["weathercode"];
+            JsonArray wcod  = daily["weather_code"];
             struct tm now = {}; int twday = 0;
             if (g_ntp_synced && getLocalTime(&now, 0)) twday = now.tm_wday;
             static const char* DAY_CZ[] = { "Ne","Po","\xc3\x9at","St","\xc4\x8ct","P\xc3\xa1","So" };
+            /* Dnešní min/max pro weather kartu (index 0 = dnes) */
+            if (tmax.size() > 0) g_weather_temp_max = tmax[0] | 0.0f;
+            if (tmin.size() > 0) g_weather_temp_min = tmin[0] | 0.0f;
+
             for (int i = 0; i < FORECAST_DAYS && i + 1 < (int)tmax.size(); i++) {
                 g_forecast[i].temp_max = tmax[i + 1] | 0.0f;
                 g_forecast[i].temp_min = tmin[i + 1] | 0.0f;
@@ -356,7 +405,7 @@ void mqtt_callback(const char* topic, byte* payload, unsigned int length) {
         strlcpy(g_weather_state,    msg, sizeof(g_weather_state));
         strlcpy(g_weather_state_cz, weather_state_to_cz(msg), sizeof(g_weather_state_cz));
     }
-    else if (t == t_weather_temp_a)   g_weather_temp     = atof(msg);
+    else if (t == t_weather_temp_a)   { g_weather_temp = atof(msg); g_weather_from_mqtt = true; }
     else if (t == t_weather_hum_a)    g_weather_humidity = atof(msg);
     else if (t == t_weather_press_a)  g_weather_pressure = atof(msg);
     else if (t == t_weather_wind_a)   g_weather_wind     = atof(msg);
@@ -419,6 +468,7 @@ static void mqtt_reconnect() {
 void setup() {
     setup_display();   /* inicializuje display, LVGL, dotyk, Serial.begin */
     Serial.println("HA Dashboard boot");
+    Serial.println("=== BUILD v2.0 - OpenMeteo delay 60s ===");
     create_screens();
 
 #if ENABLE_WIFI_NTP
@@ -477,7 +527,7 @@ void loop() {
     static bool forecast_done = false;
     unsigned long now_ms = millis();
     bool do_fetch = g_wifi_ok && (
-        (!forecast_done && now_ms > 10000UL) ||
+        (!forecast_done && now_ms > 60000UL) ||
         (forecast_done  && now_ms - last_forecast_ms > 30UL * 60UL * 1000UL)
     );
     if (do_fetch) {
