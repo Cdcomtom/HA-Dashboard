@@ -10,6 +10,8 @@
 
 #include "screens.h"
 #include "fonts_cz.h"
+
+
 #include "dashboard_data.h"
 #include "cfg_iface.h"
 #include <string.h>
@@ -25,6 +27,8 @@
 /* Forward declarations – static funkce volané před definicí */
 static void publish_thermostat_target(void);
 static void publish_thermostat_mode(int mode_idx);
+static void screensaver_hide(void);
+static void screensaver_show(lv_obj_t *parent);
 
 objects_t objects;
 lv_obj_t *tick_value_change_obj;
@@ -35,6 +39,84 @@ static lv_obj_t *g_nav_buttons[5] = {0};
 static int g_current_screen = 0;  /* 0=HOME 1=KLIMATE 2=LIGHTS 3=ENERGY 4=SYSTEM */
 static uint32_t g_last_activity_tick = 0;
 #define AUTO_HOME_TIMEOUT_MS  30000  /* 30 s na non-home → zpět HOME */
+
+/* ── Screensaver ─────────────────────────────────────────────────────────── */
+static lv_obj_t *g_screensaver_overlay = NULL;
+static bool      g_screensaver_active  = false;
+
+static lv_obj_t *g_ss_lbl_time  = NULL;
+static lv_obj_t *g_ss_lbl_date  = NULL;
+static lv_obj_t *g_ss_lbl_temp  = NULL;
+static lv_obj_t *g_ss_icon      = NULL;
+
+static void screensaver_hide(void) {
+    if (!g_screensaver_active) return;
+    if (g_screensaver_overlay) {
+        lv_obj_del(g_screensaver_overlay);
+        g_screensaver_overlay = NULL;
+        g_ss_lbl_time = NULL;
+        g_ss_lbl_date = NULL;
+        g_ss_lbl_temp = NULL;
+        g_ss_icon     = NULL;
+    }
+    g_screensaver_active = false;
+    g_last_activity_tick = lv_tick_get();
+}
+
+static void screensaver_tap_cb(lv_event_t *e) {
+    (void)e;
+    screensaver_hide();
+}
+
+static void screensaver_show(lv_obj_t *parent) {
+    if (g_screensaver_active) return;
+    g_screensaver_active = true;
+
+    /* Tmavý overlay přes celou obrazovku */
+    g_screensaver_overlay = lv_obj_create(parent);
+    lv_obj_set_pos(g_screensaver_overlay, 0, 0);
+    lv_obj_set_size(g_screensaver_overlay, 800, 480);
+    lv_obj_set_style_bg_color(g_screensaver_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_screensaver_overlay, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_screensaver_overlay, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(g_screensaver_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(g_screensaver_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(g_screensaver_overlay, screensaver_tap_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_move_foreground(g_screensaver_overlay);
+
+    /* Hodiny – velké, uprostřed nahoře */
+    /* Hodiny – montserrat_28_cz zvětšený přes font_size override na 48px */
+    g_ss_lbl_time = lv_label_create(g_screensaver_overlay);
+    lv_obj_set_style_text_font(g_ss_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_ss_lbl_time, lv_color_hex(0xe0f0ff), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_ss_lbl_time, 10, LV_PART_MAIN);
+    lv_obj_set_size(g_ss_lbl_time, 400, 80);
+    lv_obj_set_style_text_align(g_ss_lbl_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_text(g_ss_lbl_time, "00:00");
+    lv_obj_align(g_ss_lbl_time, LV_ALIGN_CENTER, 0, -80);
+
+    /* Datum */
+    g_ss_lbl_date = lv_label_create(g_screensaver_overlay);
+    lv_obj_set_style_text_font(g_ss_lbl_date, &montserrat_20_cz, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_ss_lbl_date, lv_color_hex(0x4a7aaa), LV_PART_MAIN);
+    lv_label_set_text(g_ss_lbl_date, "Po 1.1.");
+    lv_obj_align(g_ss_lbl_date, LV_ALIGN_CENTER, 0, 20);
+
+    /* Ikona počasí – větší container */
+    g_ss_icon = lv_obj_create(g_screensaver_overlay);
+    lv_obj_set_size(g_ss_icon, 80, 80);
+    lv_obj_set_style_bg_opa(g_ss_icon, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_ss_icon, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_ss_icon, 0, LV_PART_MAIN);
+    lv_obj_align(g_ss_icon, LV_ALIGN_CENTER, -50, 90);
+
+    /* Teplota počasí */
+    g_ss_lbl_temp = lv_label_create(g_screensaver_overlay);
+    lv_obj_set_style_text_font(g_ss_lbl_temp, &montserrat_28_cz, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_ss_lbl_temp, lv_color_hex(0x00c8b4), LV_PART_MAIN);
+    lv_label_set_text(g_ss_lbl_temp, "-- \xc2\xb0\x43");
+    lv_obj_align(g_ss_lbl_temp, LV_ALIGN_CENTER, 40, 100);
+}
 
 /* Static refs pro live update na non-HOME obrazovkách
  * (HOME používá objects.lbl_*; LIGHTS/KLIMATE drží refy zde, protože widgety
@@ -354,7 +436,7 @@ static void update_nav_highlight(int active_idx) {
         } else {
             lv_obj_set_style_bg_color(btn, lv_color_hex(C_BG_HEADER), LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+            if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         }
     }
 }
@@ -443,7 +525,7 @@ static void build_header(lv_obj_t *parent) {
     lv_obj_t *lbl_datum = lv_label_create(parent);
     objects.lbl_datum = lbl_datum;
     lv_obj_set_pos(lbl_datum, 110, 18);
-    lv_obj_set_style_text_color(lbl_datum, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(lbl_datum, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(lbl_datum, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(lbl_datum, "...");
 
@@ -550,7 +632,7 @@ static void show_home_content(void) {
         lv_obj_t *lbl_v = lv_label_create(c);
         objects.lbl_venku_vlhk = lbl_v;
         lv_obj_set_pos(lbl_v, 10, 76);
-        lv_obj_set_style_text_color(lbl_v, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_v, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_v, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_v, "Vlhkost: 62%");
         objects.pb_venku_vlhk = make_pb(c, 10, 110, PB_W, (PB_W * 62) / 100, C_ACCENT_BLUE);
@@ -568,19 +650,19 @@ static void show_home_content(void) {
         lv_obj_t *lbl_t = lv_label_create(c);
         objects.lbl_obyvak_temp = lbl_t;
         lv_obj_set_pos(lbl_t, 10, 32);
-        lv_obj_set_style_text_color(lbl_t, lv_color_hex(C_ACCENT_TEAL), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_t, lv_color_hex(0x00c8b4), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_t, &montserrat_20_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_t, "22°C");
         lv_obj_t *lbl_v = lv_label_create(c);
         objects.lbl_obyvak_vlhk = lbl_v;
         lv_obj_set_pos(lbl_v, 10, 76);
-        lv_obj_set_style_text_color(lbl_v, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_v, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_v, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_v, "Vlhkost: 45%");
         objects.pb_obyvak_vlhk = make_pb(c, 10, 110, PB_W, (PB_W * 45) / 100, C_ACCENT_TEAL);
         lv_obj_t *tag = lv_label_create(c);
         lv_obj_set_pos(tag, 160, 76);
-        lv_obj_set_style_text_color(tag, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(tag, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(tag, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(tag, "uvnitř");
     }
@@ -598,7 +680,7 @@ static void show_home_content(void) {
         lv_obj_t *lbl_state = lv_label_create(c);
         objects.lbl_weather_state = lbl_state;
         lv_obj_set_pos(lbl_state, 10, 60);
-        lv_obj_set_style_text_color(lbl_state, lv_color_hex(C_TEXT_PRIMARY), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_state, lv_color_hex(0xe0f0ff), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_state, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_state, "Slunečno");
         lv_obj_t *icon = lv_obj_create(c);
@@ -614,31 +696,31 @@ static void show_home_content(void) {
         lv_obj_t *lbl_min = lv_label_create(c);
         objects.lbl_weather_min = lbl_min;
         lv_obj_set_pos(lbl_min, COL_L, META_Y0);
-        lv_obj_set_style_text_color(lbl_min, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_min, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_min, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_min, "min: 12°");
         lv_obj_t *lbl_max = lv_label_create(c);
         objects.lbl_weather_max = lbl_max;
         lv_obj_set_pos(lbl_max, COL_L, META_Y0 + META_DY);
-        lv_obj_set_style_text_color(lbl_max, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_max, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_max, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_max, "max: 24°");
         lv_obj_t *lbl_press = lv_label_create(c);
         objects.lbl_weather_pressure = lbl_press;
         lv_obj_set_pos(lbl_press, COL_L, META_Y0 + 2 * META_DY);
-        lv_obj_set_style_text_color(lbl_press, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_press, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_press, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_press, "1013 hPa");
         lv_obj_t *lbl_hum = lv_label_create(c);
         objects.lbl_weather_humidity = lbl_hum;
         lv_obj_set_pos(lbl_hum, COL_R, META_Y0);
-        lv_obj_set_style_text_color(lbl_hum, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_hum, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_hum, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_hum, "vlh: 65%");
         lv_obj_t *lbl_wind = lv_label_create(c);
         objects.lbl_weather_wind = lbl_wind;
         lv_obj_set_pos(lbl_wind, COL_R, META_Y0 + META_DY);
-        lv_obj_set_style_text_color(lbl_wind, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(lbl_wind, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(lbl_wind, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(lbl_wind, "vítr: 5 km/h");
     }
@@ -679,7 +761,7 @@ static void show_home_content(void) {
             lv_obj_t *lname = lv_label_create(tile);
             lv_obj_set_pos(lname, 28, 8);
             lv_obj_set_style_text_font(lname,  &montserrat_14_cz, 0);
-            lv_obj_set_style_text_color(lname, lv_color_hex(C_TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_color(lname, lv_color_hex(0xe0f0ff), 0);
             const char *nm = cfg_get_light_name(i);
             lv_label_set_text(lname, (nm && nm[0]) ? nm : "Světlo");
 
@@ -726,7 +808,7 @@ static void show_home_content(void) {
             lv_obj_t *d = lv_label_create(c);
             lv_obj_set_pos(d, col_x, 30);
             lv_obj_set_size(d, 72, 18);
-            lv_obj_set_style_text_color(d, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+            lv_obj_set_style_text_color(d, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_obj_set_style_text_font(d, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_obj_set_style_text_align(d, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
             lv_label_set_text(d, fc[i].day);
@@ -773,7 +855,7 @@ static void mk_metric(lv_obj_t *parent, int x, int y, int w, int h, const char *
     lv_obj_t *c = make_card(parent, x, y, w, h, accent);
     lv_obj_t *l = lv_label_create(c);
     lv_obj_set_pos(l, 12, 14);
-    lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(l, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(l, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(l, label);
     lv_obj_t *v = lv_label_create(c);
@@ -862,13 +944,13 @@ static void show_klimate_content(void) {
     /* Vlevo: aktuální teplota label */
     lv_obj_t *cur_lbl = lv_label_create(th);
     lv_obj_set_pos(cur_lbl, 30, 50);
-    lv_obj_set_style_text_color(cur_lbl, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(cur_lbl, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(cur_lbl, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(cur_lbl, "Aktuální:");
     lv_obj_t *cur_val = lv_label_create(th);
     objects.lbl_thermostat_current = cur_val;
     lv_obj_set_pos(cur_val, 30, 75);
-    lv_obj_set_style_text_color(cur_val, lv_color_hex(C_TEXT_PRIMARY), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(cur_val, lv_color_hex(0xe0f0ff), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(cur_val, &montserrat_28_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(cur_val, "--°C");
 
@@ -876,7 +958,7 @@ static void show_klimate_content(void) {
     lv_obj_t *set_lbl = lv_label_create(th);
     lv_obj_set_pos(set_lbl, 0, 50);
     lv_obj_set_size(set_lbl, 790, 24);
-    lv_obj_set_style_text_color(set_lbl, lv_color_hex(C_TEXT_DIM), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(set_lbl, lv_color_hex(0x4a7aaa), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(set_lbl, &montserrat_14_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_align(set_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_label_set_text(set_lbl, "NASTAVENÁ TEPLOTA");
@@ -1019,7 +1101,7 @@ static void show_lights_content(void) {
         int y = 40 + i * 48;
         lv_obj_t *n = lv_label_create(card);
         lv_obj_set_pos(n, 20, y);
-        lv_obj_set_style_text_color(n, lv_color_hex(C_TEXT_PRIMARY), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_color(n, lv_color_hex(0xe0f0ff), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_font(n, &montserrat_20_cz, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_label_set_text(n, cfg_get_light_name(i));
         /* pill - default OFF, timer cb to opraví dle real stavu */
@@ -1122,7 +1204,7 @@ static lv_obj_t *make_e_node(lv_obj_t *par,
     lv_obj_set_width(lnm, w);
     lv_obj_set_style_text_align(lnm, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_font(lnm,  &montserrat_14_cz, 0);
-    lv_obj_set_style_text_color(lnm, lv_color_hex(C_TEXT_DIM), 0);
+    lv_obj_set_style_text_color(lnm, lv_color_hex(0x4a7aaa), 0);
     lv_label_set_text(lnm, name);
     /* Hodnota — val_str jiz obsahuje jednotku (napr. "0 W", "1.5 kW") */
     (void)unit_str;
@@ -1236,7 +1318,7 @@ static void show_energy_content(void) {
             snprintf(buf, sizeof(buf), "%.1f %s", g_energy_power[4], su);
             lv_obj_t *lk4 = lv_label_create(p);
             lv_obj_set_pos(lk4, 20, 352);
-            lv_obj_set_style_text_color(lk4, lv_color_hex(C_TEXT_DIM), 0);
+            lv_obj_set_style_text_color(lk4, lv_color_hex(0x4a7aaa), 0);
             lv_obj_set_style_text_font(lk4,  &montserrat_14_cz, 0);
             lv_label_set_text(lk4, sn);
             lv_obj_t *lv4 = lv_label_create(p);
@@ -1255,7 +1337,7 @@ static void show_energy_content(void) {
             snprintf(buf, sizeof(buf), "%.0f %s", g_energy_power[5], su);
             lv_obj_t *lk5 = lv_label_create(p);
             lv_obj_set_pos(lk5, 430, 352);
-            lv_obj_set_style_text_color(lk5, lv_color_hex(C_TEXT_DIM), 0);
+            lv_obj_set_style_text_color(lk5, lv_color_hex(0x4a7aaa), 0);
             lv_obj_set_style_text_font(lk5,  &montserrat_14_cz, 0);
             lv_label_set_text(lk5, sn);
             lv_obj_t *lv5 = lv_label_create(p);
@@ -1306,12 +1388,12 @@ static void show_system_content(void) {
         int y = 38 + row * 40;
         lv_obj_t *k = lv_label_create(card);
         lv_obj_set_pos(k, x, y);
-        lv_obj_set_style_text_color(k, lv_color_hex(C_TEXT_DIM), 0);
+        lv_obj_set_style_text_color(k, lv_color_hex(0x4a7aaa), 0);
         lv_obj_set_style_text_font(k, &montserrat_14_cz, 0);
         lv_label_set_text(k, rows[i].k);
         lv_obj_t *v = lv_label_create(card);
         lv_obj_set_pos(v, x + 100, y);
-        lv_obj_set_style_text_color(v, lv_color_hex(C_TEXT_PRIMARY), 0);
+        lv_obj_set_style_text_color(v, lv_color_hex(0xe0f0ff), 0);
         lv_obj_set_style_text_font(v, &montserrat_14_cz, 0);
         lv_label_set_text(v, rows[i].v);
     }
@@ -1324,7 +1406,7 @@ static void show_system_content(void) {
     {
         lv_obj_t *lb = lv_label_create(dcard);
         lv_obj_set_pos(lb, 15, 30);
-        lv_obj_set_style_text_color(lb, lv_color_hex(C_TEXT_DIM), 0);
+        lv_obj_set_style_text_color(lb, lv_color_hex(0x4a7aaa), 0);
         lv_obj_set_style_text_font(lb, &montserrat_14_cz, 0);
         lv_label_set_text(lb, "Base topic:");
         lv_obj_t *lv = lv_label_create(dcard);
@@ -1338,7 +1420,7 @@ static void show_system_content(void) {
     {
         lv_obj_t *lb = lv_label_create(dcard);
         lv_obj_set_pos(lb, 300, 30);
-        lv_obj_set_style_text_color(lb, lv_color_hex(C_TEXT_DIM), 0);
+        lv_obj_set_style_text_color(lb, lv_color_hex(0x4a7aaa), 0);
         lv_obj_set_style_text_font(lb, &montserrat_14_cz, 0);
         lv_label_set_text(lb, "Prij.:");
         s_sys_dbg_cnt = lv_label_create(dcard);
@@ -1367,6 +1449,10 @@ static void show_system_content(void) {
 /* Reset activity tick na jakýkoliv touch (screen-level event) */
 static void screen_activity_cb(lv_event_t *e) {
     (void)e;
+    if (g_screensaver_active) {
+        screensaver_hide();
+        return;  /* první tap pouze zruší screensaver, neinteraguje s UI */
+    }
     g_last_activity_tick = lv_tick_get();
 }
 
@@ -1639,6 +1725,54 @@ static void auto_return_home_timer_cb(lv_timer_t *t) {
     }
 }
 
+static void screensaver_update(void) {
+    if (!g_screensaver_active) return;
+    char buf[32];
+    /* Hodiny */
+    if (g_ss_lbl_time && objects.lbl_cas)
+        lv_label_set_text(g_ss_lbl_time, lv_label_get_text(objects.lbl_cas));
+    /* Datum */
+    if (g_ss_lbl_date && objects.lbl_datum)
+        lv_label_set_text(g_ss_lbl_date, lv_label_get_text(objects.lbl_datum));
+    /* Teplota počasí */
+    if (g_ss_lbl_temp) {
+        snprintf(buf, sizeof(buf), "%.0f\xc2\xb0\x43", g_weather_temp);
+        lv_label_set_text(g_ss_lbl_temp, buf);
+    }
+    /* Ikona počasí */
+    if (g_ss_icon) {
+        static char last_ss_cond[24] = "";
+        if (strcmp(last_ss_cond, g_weather_state) != 0) {
+            strlcpy(last_ss_cond, g_weather_state, sizeof(last_ss_cond));
+            lv_obj_clean(g_ss_icon);
+            draw_weather_icon(g_ss_icon, g_weather_state);
+        }
+    }
+}
+
+static void screensaver_timer_cb(lv_timer_t *t) {
+    (void)t;
+    extern uint8_t g_screensaver_timeout_val;
+    uint8_t timeout_min = g_screensaver_timeout_val;
+    static uint32_t dbg_last = 0;
+    if (lv_tick_elaps(dbg_last) > 10000) {  /* každých 10s vypiš stav */
+        dbg_last = lv_tick_get();
+        LV_LOG_USER("SS timer: timeout=%d min, data_valid=%d, elapsed=%lu ms, active=%d",
+            (int)timeout_min, (int)g_data_valid,
+            (unsigned long)lv_tick_elaps(g_last_activity_tick),
+            (int)g_screensaver_active);
+    }
+    if (timeout_min == 0) return;  /* screensaver vypnutý */
+    /* g_data_valid check odstraněn - screensaver funguje i bez MQTT */
+    uint32_t timeout_ms = (uint32_t)timeout_min * 60UL * 1000UL;
+    if (!g_screensaver_active) {
+        if (lv_tick_elaps(g_last_activity_tick) > timeout_ms)
+            screensaver_show(objects.main);
+    } else {
+        screensaver_update();
+    }
+}
+
 void create_screen_main(void) {
     lv_obj_t *scr = lv_obj_create(NULL);
     objects.main = scr;
@@ -1673,6 +1807,8 @@ void create_screen_main(void) {
     lv_timer_create(ui_data_update_timer_cb, 1000, NULL);
     /* Timer 2x za sekundu - update KLIMATE/LIGHTS/ENERGY */
     lv_timer_create(ui_klimate_lights_update_timer_cb, 500, NULL);
+    /* Timer 1x za sekundu - screensaver */
+    lv_timer_create(screensaver_timer_cb, 1000, NULL);
 
     lv_screen_load(objects.main);
     tick_screen_main();

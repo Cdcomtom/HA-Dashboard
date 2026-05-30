@@ -52,6 +52,7 @@ static void set_defaults() {
     strlcpy(g_cfg.weather_lat, "50.0755", sizeof(g_cfg.weather_lat));
     strlcpy(g_cfg.weather_lon, "14.4378", sizeof(g_cfg.weather_lon));
     g_cfg.configured = false;
+    g_cfg.screensaver_timeout = 5;  /* default: 5 minut */
 }
 
 /* ── NVS ──────────────────────────────────────────────────────────────── */
@@ -149,6 +150,10 @@ extern "C" {
     const char* cfg_get_energy_unit(int idx) {
         if (idx < 0 || idx >= CFG_MAX_ENERGY) return "";
         return g_cfg.energy_unit[idx];
+    }
+
+    uint8_t cfg_get_screensaver_timeout(void) {
+        return g_cfg.screensaver_timeout;
     }
 
     const char* sys_get_wifi_ssid(void) {
@@ -266,6 +271,17 @@ td{padding:4px 8px} td input{margin:0}
 <tr><td>5</td><td><input id="l4e"></td><td><input id="l4n"></td></tr>
 <tr><td>6</td><td><input id="l5e"></td><td><input id="l5n"></td></tr>
 </table>
+<h2>Screensaver</h2>
+<div class="row">
+  <div class="f"><label>Aktivovat po nečinnosti</label>
+  <select id="screensaver_timeout" style="background:#0d1f35;border:1px solid #1a4a7a;border-radius:4px;color:#c8d8f0;padding:6px 10px;font-size:13px;width:100%">
+    <option value="0">Vypnuto</option>
+    <option value="1">1 minuta</option>
+    <option value="5">5 minut</option>
+    <option value="10">10 minut</option>
+    <option value="30">30 minut</option>
+  </select></div>
+</div>
 <h2>ENERGY <small class="note">(připraveno – entity se aktivují po doplnění)</small></h2>
 <table>
 <tr><th>#</th><th>Entity ID</th><th>Název</th><th>Jednotka</th></tr>
@@ -294,6 +310,7 @@ fetch('/api/config').then(r=>r.json()).then(d=>{
   sv('entity_weather',d.entity_weather);sv('entity_kli_pracovna',d.entity_kli_pracovna);
   sv('entity_kli_bojler',d.entity_kli_bojler);sv('entity_kli_kotel',d.entity_kli_kotel);
   sv('entity_thermostat',d.entity_thermostat);
+  if(d.screensaver_timeout!==undefined){var s=document.getElementById('screensaver_timeout');if(s)s.value=d.screensaver_timeout;}
   if(d.lights)d.lights.forEach((l,i)=>{sv('l'+i+'e',l.entity);sv('l'+i+'n',l.name);});
   if(d.energy)d.energy.forEach((e,i)=>{sv('e'+i+'e',e.entity);sv('e'+i+'n',e.name);sv('e'+i+'u',e.unit);});
 });
@@ -309,7 +326,9 @@ document.getElementById('frm').addEventListener('submit',ev=>{
     entity_venku_temp:g('entity_venku_temp'),entity_obyvak_temp:g('entity_obyvak_temp'),
     entity_weather:g('entity_weather'),entity_kli_pracovna:g('entity_kli_pracovna'),
     entity_kli_bojler:g('entity_kli_bojler'),entity_kli_kotel:g('entity_kli_kotel'),
-    entity_thermostat:g('entity_thermostat'),lights:[],energy:[]
+    entity_thermostat:g('entity_thermostat'),
+    screensaver_timeout:parseInt(document.getElementById('screensaver_timeout').value)||0,
+    lights:[],energy:[]
   };
   for(var i=0;i<6;i++){
     data.lights.push({entity:g('l'+i+'e'),name:g('l'+i+'n')});
@@ -347,6 +366,7 @@ static void handle_api_get() {
     doc["entity_kli_bojler"]   = g_cfg.entity_kli_bojler;
     doc["entity_kli_kotel"]    = g_cfg.entity_kli_kotel;
     doc["entity_thermostat"]   = g_cfg.entity_thermostat;
+    doc["screensaver_timeout"] = g_cfg.screensaver_timeout;
 
     JsonArray lights = doc["lights"].to<JsonArray>();
     for (int i = 0; i < CFG_MAX_LIGHTS; i++) {
@@ -394,6 +414,7 @@ static void handle_api_post() {
     CP(entity_kli_bojler,   "entity_kli_bojler");
     CP(entity_kli_kotel,    "entity_kli_kotel");
     CP(entity_thermostat,   "entity_thermostat");
+    g_cfg.screensaver_timeout = (uint8_t)(doc["screensaver_timeout"] | (int)g_cfg.screensaver_timeout);
 #undef CP
     JsonArray lights = doc["lights"];
     if (!lights.isNull())
@@ -475,6 +496,12 @@ void config_manager_init() {
     web_server.on("/api/config",  HTTP_POST, handle_api_post);
     web_server.on("/api/reset",   HTTP_POST, handle_reset);
     web_server.onNotFound(handle_not_found);
+
+     // ← PŘIDAT TADY (před web_server.begin):
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP("HA-Dashboard", "ha-dashboard");
+    Serial.printf("[CFG] AP spuštěn: 192.168.4.1\n");
+    
     web_server.begin();
     Serial.printf("[CFG] Web portal at http://%s/\n", WiFi.localIP().toString().c_str());
 }

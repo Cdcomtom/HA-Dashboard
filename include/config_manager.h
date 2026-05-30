@@ -53,6 +53,8 @@ struct AppConfig {
     char weather_lat[12];     /* "50.0755" */
     char weather_lon[12];     /* "14.4378" */
 
+    uint8_t screensaver_timeout; /* 0=vypnuto, jinak minuty nečinnosti (1,5,10…) */
+
     bool configured;   /* true = byl alespoň jednou nastaven přes portál */
 };
 
@@ -91,6 +93,7 @@ const char* cfg_get_light_entity(int idx);    /* "light.obyvak"            */
 const char* cfg_get_light_name(int idx);      /* "Obývák"                  */
 const char* cfg_get_light_topic_set(int idx); /* "ha/light/obyvak/set"     */
 const char* cfg_get_thermostat_entity(void);  /* "climate.xyz"             */
+uint8_t     cfg_get_screensaver_timeout(void);/* 0=off, else minutes        */
 
 /* ── Energy gettery ────────────────────────────────────────────────────── */
 const char* cfg_get_energy_entity(int idx);   /* "sensor.solar_power" */

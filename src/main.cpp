@@ -41,6 +41,8 @@ bool  g_wifi_ok        = false;
 bool  g_mqtt_connected    = false;
 bool  g_weather_from_mqtt = false;  // true = pocasi prijato z MQTT
 bool  g_data_valid     = false;
+bool  g_weather_from_mqtt = false;
+uint8_t g_screensaver_timeout_val = 5;
 mqtt_publish_fn_t g_mqtt_publish = NULL;
 ha_call_fn_t      g_ha_call      = NULL;
 
@@ -487,6 +489,7 @@ void setup() {
 
 #if ENABLE_MQTT
     build_topic_cache();
+    g_screensaver_timeout_val = g_cfg.screensaver_timeout;
     mqtt_client.setServer(g_cfg.mqtt_server, g_cfg.mqtt_port);
     mqtt_client.setCallback(mqtt_callback);
     mqtt_client.setBufferSize(8192);   /* forecast JSON může být velký */
