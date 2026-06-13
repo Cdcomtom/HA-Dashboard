@@ -85,6 +85,11 @@ extern bool g_light_zahrada;   /* Garden                                    */
  * distinguish "not yet received" from "genuinely zero".                    */
 extern bool g_data_valid;
 
+/* ── Screensaver timeout ─────────────────────────────────────────────────────
+ * Kopírováno z g_cfg.screensaver_timeout po načtení konfigurace.
+ * 0 = vypnuto, jinak počet minut nečinnosti.                               */
+extern uint8_t g_screensaver_timeout_val;
+
 /* ── MQTT publish hook ───────────────────────────────────────────────────────
  * Assigned in main.cpp after MQTT is connected.
  * Call from screens.c to publish any MQTT topic.

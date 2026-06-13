@@ -30,6 +30,9 @@ extern "C" {
 
 LV_FONT_DECLARE(montserrat_14_cz)
 LV_FONT_DECLARE(montserrat_20_cz)
+LV_FONT_DECLARE(montserrat_28_cz)
+extern const lv_font_t lv_font_montserrat_40;
+extern const lv_font_t lv_font_montserrat_48;
 
 #ifdef __cplusplus
 }

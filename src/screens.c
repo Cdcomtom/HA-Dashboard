@@ -10,6 +10,13 @@
 
 #include "screens.h"
 #include "fonts_cz.h"
+#include "img_data.h"
+/* LVGL image declarations */
+
+
+
+
+
 
 
 #include "dashboard_data.h"
@@ -1138,99 +1145,195 @@ static void show_lights_content(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * ENERGY — Power flow diagram (3 kruhové ukazatele + domeček + šipky)
- * Slot 0 = Solár (nahoře), Slot 1 = Spotřeba (vlevo dole), Slot 2 = Síť (vpravo dole)
- * Slot 3-5 = textové metriky v rozích (kWh, V, ...)
+ * ENERGY — Power flow diagram s ikonami
+ * Slot 0 = Solár, Slot 1 = Dům/spotřeba, Slot 2 = Síť
+ * Slot 3 = Baterie W, Slot 4 = Výroba dnes kWh, Slot 5 = Baterie SOC %
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-
-/* Středy kruhů v souřadnicích content containeru */
-
-/* Barvy: solár=žlutooranžová, spotřeba=zelená, síť=modrá */
-
-/* Statické pole bodů pro lv_line (musí přežít funkci) */
-static lv_point_precise_t s_ept[6][2]; /* 0=solar-house, 1=house-cons, 2=house-grid,
-                                           3-5 = šipky (krátké) */
+/* Statické pole bodů pro lv_line */
+static lv_point_precise_t s_ept[6][2];
 
 /* Ukazatelé pro timer update */
 static lv_obj_t *s_eval[3]  = {NULL, NULL, NULL};
-static lv_obj_t *s_emtx[3]  = {NULL, NULL, NULL}; /* text metriky sl. 3-5 */
+static lv_obj_t *s_emtx[3]  = {NULL, NULL, NULL};
 
-/* --- Pomocná: jeden kruhový ukazatel ------------------------------------ */
-/* --- Pomocná: čára + šipková značka uprostřed --------------------------- */
+/* --- Kreslené ikony pomocí LVGL objektů ---------------------------------- */
+
+/* Solár: žlutý kruh + 8 paprsků */
+static void draw_icon_solar(lv_obj_t *par, int cx, int cy, uint32_t col) {
+    /* Střed - kruh */
+    lv_obj_t *c = lv_obj_create(par);
+    lv_obj_set_size(c, 22, 22);
+    lv_obj_set_pos(c, cx-11, cy-11);
+    lv_obj_set_style_bg_color(c, lv_color_hex(col), 0);
+    lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(c, 0, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    /* Paprsky - 4 čáry */
+    static lv_point_precise_t rpts[4][2];
+    int r = 18;
+    int dx[] = {0, r, 0, -r};
+    int dy[] = {-r, 0, r, 0};
+    for (int i = 0; i < 4; i++) {
+        rpts[i][0].x = cx; rpts[i][0].y = cy;
+        rpts[i][1].x = cx+dx[i]; rpts[i][1].y = cy+dy[i];
+        lv_obj_t *ln = lv_line_create(par);
+        lv_line_set_points(ln, rpts[i], 2);
+        lv_obj_set_style_line_color(ln, lv_color_hex(col), 0);
+        lv_obj_set_style_line_width(ln, 2, 0);
+    }
+}
+
+/* Dům: obdélník + trojúhelníková střecha (čáry) */
+static lv_point_precise_t s_house_pts[3][2];
+static void draw_icon_house(lv_obj_t *par, int cx, int cy, uint32_t col) {
+    /* Tělo domu */
+    lv_obj_t *body = lv_obj_create(par);
+    lv_obj_set_size(body, 30, 22);
+    lv_obj_set_pos(body, cx-15, cy-2);
+    lv_obj_set_style_bg_color(body, lv_color_hex(col), 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_30, 0);
+    lv_obj_set_style_border_color(body, lv_color_hex(col), 0);
+    lv_obj_set_style_border_width(body, 2, 0);
+    lv_obj_set_style_radius(body, 2, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    /* Střecha - dva úseky */
+    s_house_pts[0][0].x = cx-18; s_house_pts[0][0].y = cy;
+    s_house_pts[0][1].x = cx;    s_house_pts[0][1].y = cy-18;
+    s_house_pts[1][0].x = cx;    s_house_pts[1][0].y = cy-18;
+    s_house_pts[1][1].x = cx+18; s_house_pts[1][1].y = cy;
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *ln = lv_line_create(par);
+        lv_line_set_points(ln, s_house_pts[i], 2);
+        lv_obj_set_style_line_color(ln, lv_color_hex(col), 0);
+        lv_obj_set_style_line_width(ln, 3, 0);
+    }
+}
+
+/* Síť: stožár - svislá čára + 2 diagonály */
+static lv_point_precise_t s_grid_pts[3][2];
+static void draw_icon_grid(lv_obj_t *par, int cx, int cy, uint32_t col) {
+    s_grid_pts[0][0].x = cx;    s_grid_pts[0][0].y = cy-20;
+    s_grid_pts[0][1].x = cx;    s_grid_pts[0][1].y = cy+20;
+    s_grid_pts[1][0].x = cx-14; s_grid_pts[1][0].y = cy-8;
+    s_grid_pts[1][1].x = cx+14; s_grid_pts[1][1].y = cy-8;
+    s_grid_pts[2][0].x = cx-8;  s_grid_pts[2][0].y = cy+8;
+    s_grid_pts[2][1].x = cx+8;  s_grid_pts[2][1].y = cy+8;
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *ln = lv_line_create(par);
+        lv_line_set_points(ln, s_grid_pts[i], 2);
+        lv_obj_set_style_line_color(ln, lv_color_hex(col), 0);
+        lv_obj_set_style_line_width(ln, 2, 0);
+    }
+}
+
+/* Baterie: obdélník s výplní podle % */
+static void draw_icon_battery(lv_obj_t *par, int cx, int cy, uint32_t col, float soc) {
+    /* Obrys */
+    lv_obj_t *outline = lv_obj_create(par);
+    lv_obj_set_size(outline, 32, 18);
+    lv_obj_set_pos(outline, cx-16, cy-9);
+    lv_obj_set_style_bg_opa(outline, 0, 0);
+    lv_obj_set_style_border_color(outline, lv_color_hex(col), 0);
+    lv_obj_set_style_border_width(outline, 2, 0);
+    lv_obj_set_style_radius(outline, 3, 0);
+    lv_obj_set_style_pad_all(outline, 0, 0);
+    lv_obj_clear_flag(outline, LV_OBJ_FLAG_SCROLLABLE);
+    /* Pólík vpravo */
+    lv_obj_t *pole = lv_obj_create(par);
+    lv_obj_set_size(pole, 4, 8);
+    lv_obj_set_pos(pole, cx+16, cy-4);
+    lv_obj_set_style_bg_color(pole, lv_color_hex(col), 0);
+    lv_obj_set_style_border_width(pole, 0, 0);
+    lv_obj_set_style_radius(pole, 1, 0);
+    lv_obj_set_style_pad_all(pole, 0, 0);
+    lv_obj_clear_flag(pole, LV_OBJ_FLAG_SCROLLABLE);
+    /* Výplň */
+    if (soc > 0) {
+        int fw = (int)(28 * (soc > 100 ? 100 : soc) / 100.0f);
+        if (fw < 2) fw = 2;
+        lv_obj_t *fill = lv_obj_create(par);
+        lv_obj_set_size(fill, fw, 12);
+        lv_obj_set_pos(fill, cx-14, cy-6);
+        lv_obj_set_style_bg_color(fill, lv_color_hex(col), 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+        lv_obj_set_style_radius(fill, 2, 0);
+        lv_obj_set_style_pad_all(fill, 0, 0);
+        lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
+/* --- Uzel s kreslenou ikonou, názvem a hodnotou -------------------------- */
+static lv_obj_t *make_e_icon_node(lv_obj_t *par,
+                                   int x, int y, int w, int h,
+                                   uint32_t col,
+                                   int icon_type,  /* 0=solar, 1=house, 2=grid, 3=battery */
+                                   const char *name,
+                                   const char *val,
+                                   float soc) {
+    lv_obj_t *box = lv_obj_create(par);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_size(box, w, h);
+    lv_obj_set_style_bg_color(box,     lv_color_hex(0x080c14), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(col), 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_radius(box, 10, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Ikona - uvnitř boxu, vycentrovaná nahoře */
+    const lv_image_dsc_t *imgs[] = {&_idsc_solar, &_idsc_home, &_idsc_grid, &_idsc_battery};
+    lv_obj_t *img = lv_image_create(box);
+    lv_image_set_src(img, imgs[icon_type]);
+    lv_obj_set_size(img, 64, 64);
+    lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 4);
+
+    /* Název */
+    lv_obj_t *lnm = lv_label_create(box);
+    lv_obj_set_style_text_font(lnm, &montserrat_14_cz, 0);
+    lv_obj_set_style_text_color(lnm, lv_color_hex(0x4a7aaa), 0);
+    lv_obj_set_width(lnm, w - 4);
+    lv_obj_set_style_text_align(lnm, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lnm, LV_ALIGN_BOTTOM_MID, 0, -22);
+    lv_label_set_text(lnm, name);
+
+    /* Hodnota */
+    lv_obj_t *lval = lv_label_create(box);
+    lv_obj_set_style_text_font(lval, &montserrat_20_cz, 0);
+    lv_obj_set_style_text_color(lval, lv_color_hex(col), 0);
+    lv_obj_set_width(lval, w - 4);
+    lv_obj_set_style_text_align(lval, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lval, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_label_set_text(lval, val);
+    return lval;
+}
+
+/* --- Šipka jako label ---------------------------------------------------- */
+static void make_e_arrow(lv_obj_t *par, int x, int y, uint32_t col, const char *sym) {
+    lv_obj_t *la = lv_label_create(par);
+    lv_obj_set_style_text_font(la, &montserrat_20_cz, 0);
+    lv_obj_set_style_text_color(la, lv_color_hex(col), 0);
+    lv_obj_set_pos(la, x, y);
+    lv_label_set_text(la, sym);
+}
+
+/* --- Čára --------------------------------------------------------------- */
 static void make_e_line(lv_obj_t *par, int idx,
-                         int x1, int y1, int x2, int y2,
-                         uint32_t col, const char *arrow) {
+                        int x1, int y1, int x2, int y2, uint32_t col) {
     s_ept[idx][0].x = x1; s_ept[idx][0].y = y1;
     s_ept[idx][1].x = x2; s_ept[idx][1].y = y2;
     lv_obj_t *ln = lv_line_create(par);
     lv_line_set_points(ln, s_ept[idx], 2);
     lv_obj_set_style_line_color(ln, lv_color_hex(col), 0);
     lv_obj_set_style_line_width(ln, 2, 0);
-    /* šipka uprostřed */
-    lv_obj_t *la = lv_label_create(par);
-    lv_obj_set_style_text_color(la, lv_color_hex(col), 0);
-    lv_obj_set_style_text_font(la,  &montserrat_14_cz, 0);
-    lv_label_set_text(la, arrow);
-    lv_obj_set_pos(la, (x1+x2)/2 - 6, (y1+y2)/2 - 9);
-}
-
-/* Helper: node box — vraci pointer na value label */
-static lv_obj_t *make_e_node(lv_obj_t *par,
-                              int x, int y, int w, int h,
-                              uint32_t col,
-                              const char *name, const char *val_str,
-                              const char *unit_str) {
-    lv_obj_t *box = lv_obj_create(par);
-    lv_obj_set_pos(box, x, y);
-    lv_obj_set_size(box, w, h);
-    lv_obj_set_style_bg_color(box,     lv_color_hex(0x080c14), 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(col),      0);
-    lv_obj_set_style_border_width(box, 2, 0);
-    lv_obj_set_style_radius(box, 8, 0);
-    lv_obj_set_style_pad_all(box, 0, 0);
-    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-    /* Barevny pruh nahore */
-    lv_obj_t *stripe = lv_obj_create(box);
-    lv_obj_set_pos(stripe, 0, 0);
-    lv_obj_set_size(stripe, w, 4);
-    lv_obj_set_style_bg_color(stripe, lv_color_hex(col), 0);
-    lv_obj_set_style_border_width(stripe, 0, 0);
-    lv_obj_set_style_radius(stripe, 0, 0);
-    lv_obj_clear_flag(stripe, LV_OBJ_FLAG_SCROLLABLE);
-    /* Nazev */
-    lv_obj_t *lnm = lv_label_create(box);
-    lv_obj_set_pos(lnm, 0, 7);
-    lv_obj_set_width(lnm, w);
-    lv_obj_set_style_text_align(lnm, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(lnm,  &montserrat_14_cz, 0);
-    lv_obj_set_style_text_color(lnm, lv_color_hex(0x4a7aaa), 0);
-    lv_label_set_text(lnm, name);
-    /* Hodnota — val_str jiz obsahuje jednotku (napr. "0 W", "1.5 kW") */
-    (void)unit_str;
-    lv_obj_t *lval = lv_label_create(box);
-    lv_obj_set_pos(lval, 0, (h >= 65) ? 30 : 24);
-    lv_obj_set_width(lval, w);
-    lv_obj_set_style_text_align(lval, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(lval, &montserrat_20_cz, 0);
-    lv_obj_set_style_text_color(lval, lv_color_hex(col), 0);
-    lv_label_set_text(lval, val_str);
-    return lval;
 }
 
 static void show_energy_content(void) {
     lv_obj_t *p = g_content_container;
     for (int i = 0; i < 3; i++) { s_eval[i]=NULL; s_emtx[i]=NULL; }
     char buf[28];
-
-    /* === DESIGN A: tok energie, 4 uzly + centralni inverter ===
-     *          [  SOLAR  ]          <- top center
-     *               |
-     * [SIT]---[INVERTER]---[DUM]   <- middle row
-     *               |
-     *         [ BATERIE ]          <- bottom center
-     *  -------- stats bar -------  <- dolni pruh
-     */
 
 #define ENODE_BUF(slot) do { \
         float _v = g_energy_power[slot]; \
@@ -1239,114 +1342,98 @@ static void show_energy_content(void) {
         else               snprintf(buf, sizeof(buf), "%.0f W",  _v); \
     } while(0)
 
-    /* Solar (nahozu, slot 0) */
+    /*
+     * Layout (800×370 content area):
+     *
+     *              [  ☀️ SOLÁR  ]          x=310, y=10, 180×90
+     *                    |  (čára)
+     *   [⚡SÍŤ]  ←  [🏠 DŮM]  →  [🔋BAT]   y=170
+     *    x=10          x=310        x=620
+     *
+     *   ──────────── stats bar ────────────  y=340
+     */
+
+    /* SOLÁR — nahoře uprostřed */
     ENODE_BUF(0);
-    { const char *u = cfg_get_energy_unit(0); if (!u||!u[0]) u="W";
-      const char *n = cfg_get_energy_name(0); if (!n||!n[0]) n="SOL\xc3\x81R";
-      s_eval[0] = make_e_node(p, 310,  6, 180, 85, 0xFFAA00, n, buf, u); }
+    { const char *n = cfg_get_energy_name(0); if (!n||!n[0]) n="SOL\xc3\x81R";
+      s_eval[0] = make_e_icon_node(p, 310, 5, 180, 130, 0xFFAA00, 0, n, buf, 0); }
 
-    /* Sit (vlevo, slot 2) */
-    ENODE_BUF(2);
-    { const char *u = cfg_get_energy_unit(2); if (!u||!u[0]) u="W";
-      const char *n = cfg_get_energy_name(2); if (!n||!n[0]) n="S\xc3\x8d\xc5\xa4";
-      s_eval[2] = make_e_node(p,  5, 160, 138, 70, 0x4FC3F7, n, buf, u); }
-
-    /* Dum (vpravo, slot 1) */
+    /* DŮM — střed */
     ENODE_BUF(1);
-    { const char *u = cfg_get_energy_unit(1); if (!u||!u[0]) u="W";
-      const char *n = cfg_get_energy_name(1); if (!n||!n[0]) n="D\xc5\xafM";
-      s_eval[1] = make_e_node(p, 657, 160, 138, 70, 0xFF8A65, n, buf, u); }
+    { const char *n = cfg_get_energy_name(1); if (!n||!n[0]) n="D\xc5\xafM";
+      s_eval[1] = make_e_icon_node(p, 310, 175, 180, 130, 0xFF8A65, 1, n, buf, 0); }
 
-    /* Baterie (dole, slot 3) */
+    /* SÍŤ — vlevo */
+    ENODE_BUF(2);
+    { const char *n = cfg_get_energy_name(2); if (!n||!n[0]) n="S\xc3\x8d\xc5\xa4";
+      s_eval[2] = make_e_icon_node(p, 10, 175, 160, 130, 0x4FC3F7, 2, n, buf, 0); }
+
+    /* BATERIE — vpravo */
     ENODE_BUF(3);
-    { const char *u = cfg_get_energy_unit(3); if (!u||!u[0]) u="W";
-      const char *n = cfg_get_energy_name(3); if (!n||!n[0]) n="BATERIE";
-      s_emtx[0] = make_e_node(p, 310, 262, 180, 85, 0x00C87A, n, buf, u); }
+    { const char *n = cfg_get_energy_name(3); if (!n||!n[0]) n="BATERIE";
+      float soc = g_energy_power[5];
+      float bw  = g_energy_power[3];
+      float ba  = bw < 0 ? -bw : bw;
+      char buf2[40];
+      if (ba >= 1000.0f) snprintf(buf2, sizeof(buf2), "%.1f kW  %.0f%%", bw/1000.0f, soc);
+      else               snprintf(buf2, sizeof(buf2), "%.0f W  %.0f%%",  bw, soc);
+      s_emtx[0] = make_e_icon_node(p, 630, 175, 160, 130, 0x00C87A, 3, n, buf2, soc); }
 
-    /* Hub — centralni inverter */
+    /* Čáry toku */
+    /* Solár → Dům (svislá) */
+    make_e_line(p, 0, 400, 100, 400, 170, 0xFFAA00);
+    make_e_arrow(p, 392, 140, 0xFFAA00, "v");
+
+    /* Síť ↔ Dům (vodorovná) */
+    make_e_line(p, 1, 170, 215, 310, 215, 0x4FC3F7);
+    make_e_arrow(p, 224, 203, 0x4FC3F7,
+                 g_energy_power[2] >= 0 ? ">" : "<");
+
+    /* Dům ↔ Baterie (vodorovná) */
+    make_e_line(p, 2, 490, 215, 630, 215, 0x00C87A);
+    make_e_arrow(p, 544, 203, 0x00C87A,
+                 g_energy_power[3] >= 0 ? ">" : "<");
+
+    /* Stats pruh dole */
     {
-        lv_obj_t *hub = lv_obj_create(p);
-        lv_obj_set_pos(hub, 345, 163);
-        lv_obj_set_size(hub, 110, 66);
-        lv_obj_set_style_bg_color(hub,     lv_color_hex(0x0d1825), 0);
-        lv_obj_set_style_border_color(hub, lv_color_hex(0x2a5a8a), 0);
-        lv_obj_set_style_border_width(hub, 2, 0);
-        lv_obj_set_style_radius(hub, 6, 0);
-        lv_obj_set_style_pad_all(hub, 0, 0);
-        lv_obj_clear_flag(hub, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t *hl = lv_label_create(hub);
-        lv_obj_set_pos(hl, 0, 24);
-        lv_obj_set_width(hl, 110);
-        lv_obj_set_style_text_align(hl, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(hl,  &montserrat_14_cz, 0);
-        lv_obj_set_style_text_color(hl, lv_color_hex(0x4a8acc), 0);
-        lv_label_set_text(hl, "INVERTER");
-    }
-
-    /* Spojovaci cary se sipkami */
-    /* solar bottom(400,84) -> hub top(400,168)  */
-    make_e_line(p, 0, 400, 91,  400, 163, 0xFFAA00, "v");
-    /* grid right(125,193) -> hub left(352,193)  */
-    make_e_line(p, 1, 143, 195, 345, 195, 0x4FC3F7, ">");
-    /* hub right(448,193) -> house left(675,193) */
-    make_e_line(p, 2, 455, 195, 657, 195, 0xFF8A65, ">");
-    /* hub bottom(400,222) -> bat top(400,268)   */
-    make_e_line(p, 3, 400, 229, 400, 262, 0x00C87A, "v");
-
-    /* Stats pruh dole: Vyroba dnes (slot 4) + Baterie % (slot 5) */
-    {
-        /* Tmave pozadi — explicitni bg_opa + zadny shadow/border */
         lv_obj_t *sb = lv_obj_create(p);
-        lv_obj_set_pos(sb, 0, 347);
-        lv_obj_set_size(sb, 800, 23);
+        lv_obj_set_pos(sb, 0, 310);
+        lv_obj_set_size(sb, 800, 40);
         lv_obj_set_style_bg_color(sb,     lv_color_hex(0x040b14), 0);
         lv_obj_set_style_bg_opa(sb,       LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(sb, lv_color_hex(0x1a3a5a), 0);
         lv_obj_set_style_border_width(sb, 1, 0);
         lv_obj_set_style_border_side(sb,  LV_BORDER_SIDE_TOP, 0);
-        lv_obj_set_style_radius(sb,       0, 0);
-        lv_obj_set_style_pad_all(sb,      0, 0);
-        lv_obj_set_style_shadow_width(sb, 0, 0);
+        lv_obj_set_style_radius(sb, 0, 0);
+        lv_obj_set_style_pad_all(sb, 0, 0);
         lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
 
-        /* Slot 4 — Vyroba dnes (denni energie, kWh) */
-        {
-            const char *sn = cfg_get_energy_name(4);
-            if (!sn || !sn[0]) sn = "V\xc3\xbdroba dnes";
-            const char *su = cfg_get_energy_unit(4);
-            if (!su || !su[0]) su = "kWh";
-            snprintf(buf, sizeof(buf), "%.1f %s", g_energy_power[4], su);
-            lv_obj_t *lk4 = lv_label_create(p);
-            lv_obj_set_pos(lk4, 20, 352);
-            lv_obj_set_style_text_color(lk4, lv_color_hex(0x4a7aaa), 0);
-            lv_obj_set_style_text_font(lk4,  &montserrat_14_cz, 0);
-            lv_label_set_text(lk4, sn);
-            lv_obj_t *lv4 = lv_label_create(p);
-            lv_obj_set_pos(lv4, 148, 352);
-            lv_obj_set_style_text_color(lv4, lv_color_hex(0xFFAA00), 0);
-            lv_obj_set_style_text_font(lv4,  &montserrat_14_cz, 0);
-            lv_label_set_text(lv4, buf);
-            s_emtx[1] = lv4;
-        }
-        /* Slot 5 — Baterie % (SOC baterie) */
-        {
-            const char *sn = cfg_get_energy_name(5);
-            if (!sn || !sn[0]) sn = "Baterie %";
-            const char *su = cfg_get_energy_unit(5);
-            if (!su || !su[0]) su = "%";
-            snprintf(buf, sizeof(buf), "%.0f %s", g_energy_power[5], su);
-            lv_obj_t *lk5 = lv_label_create(p);
-            lv_obj_set_pos(lk5, 430, 352);
-            lv_obj_set_style_text_color(lk5, lv_color_hex(0x4a7aaa), 0);
-            lv_obj_set_style_text_font(lk5,  &montserrat_14_cz, 0);
-            lv_label_set_text(lk5, sn);
-            lv_obj_t *lv5 = lv_label_create(p);
-            lv_obj_set_pos(lv5, 530, 352);
-            lv_obj_set_style_text_color(lv5, lv_color_hex(0x00C87A), 0);
-            lv_obj_set_style_text_font(lv5,  &montserrat_14_cz, 0);
-            lv_label_set_text(lv5, buf);
-            s_emtx[2] = lv5;
-        }
+        /* Výroba dnes */
+        const char *sn4 = cfg_get_energy_name(4); if (!sn4||!sn4[0]) sn4="V\xc3\xbdroba dnes";
+        const char *su4 = cfg_get_energy_unit(4); if (!su4||!su4[0]) su4="kWh";
+        snprintf(buf, sizeof(buf), "%.2f %s", g_energy_power[4], su4);
+        lv_obj_t *ln4 = lv_label_create(p); lv_obj_set_pos(ln4, 20, 318);
+        lv_obj_set_style_text_color(ln4, lv_color_hex(0x4a7aaa), 0);
+        lv_obj_set_style_text_font(ln4, &montserrat_14_cz, 0);
+        lv_label_set_text(ln4, sn4);
+        lv_obj_t *lv4 = lv_label_create(p); lv_obj_set_pos(lv4, 160, 318);
+        lv_obj_set_style_text_color(lv4, lv_color_hex(0xFFAA00), 0);
+        lv_obj_set_style_text_font(lv4, &montserrat_14_cz, 0);
+        lv_label_set_text(lv4, buf);
+        s_emtx[1] = lv4;
+
+        /* Baterie SOC */
+        const char *sn5 = cfg_get_energy_name(5); if (!sn5||!sn5[0]) sn5="Baterie SOC";
+        snprintf(buf, sizeof(buf), "%.0f %%", g_energy_power[5]);
+        lv_obj_t *ln5 = lv_label_create(p); lv_obj_set_pos(ln5, 450, 318);
+        lv_obj_set_style_text_color(ln5, lv_color_hex(0x4a7aaa), 0);
+        lv_obj_set_style_text_font(ln5, &montserrat_14_cz, 0);
+        lv_label_set_text(ln5, sn5);
+        lv_obj_t *lv5 = lv_label_create(p); lv_obj_set_pos(lv5, 570, 318);
+        lv_obj_set_style_text_color(lv5, lv_color_hex(0x00C87A), 0);
+        lv_obj_set_style_text_font(lv5, &montserrat_14_cz, 0);
+        lv_label_set_text(lv5, buf);
+        s_emtx[2] = lv5;
     }
 
 #undef ENODE_BUF
@@ -1739,31 +1826,11 @@ static void screensaver_update(void) {
         snprintf(buf, sizeof(buf), "%.0f\xc2\xb0\x43", g_weather_temp);
         lv_label_set_text(g_ss_lbl_temp, buf);
     }
-    /* Ikona počasí */
-    if (g_ss_icon) {
-        static char last_ss_cond[24] = "";
-        if (strcmp(last_ss_cond, g_weather_state) != 0) {
-            strlcpy(last_ss_cond, g_weather_state, sizeof(last_ss_cond));
-            lv_obj_clean(g_ss_icon);
-            draw_weather_icon(g_ss_icon, g_weather_state);
-        }
-    }
-}
-
 static void screensaver_timer_cb(lv_timer_t *t) {
     (void)t;
     extern uint8_t g_screensaver_timeout_val;
     uint8_t timeout_min = g_screensaver_timeout_val;
-    static uint32_t dbg_last = 0;
-    if (lv_tick_elaps(dbg_last) > 10000) {  /* každých 10s vypiš stav */
-        dbg_last = lv_tick_get();
-        LV_LOG_USER("SS timer: timeout=%d min, data_valid=%d, elapsed=%lu ms, active=%d",
-            (int)timeout_min, (int)g_data_valid,
-            (unsigned long)lv_tick_elaps(g_last_activity_tick),
-            (int)g_screensaver_active);
-    }
-    if (timeout_min == 0) return;  /* screensaver vypnutý */
-    /* g_data_valid check odstraněn - screensaver funguje i bez MQTT */
+    if (timeout_min == 0) return;
     uint32_t timeout_ms = (uint32_t)timeout_min * 60UL * 1000UL;
     if (!g_screensaver_active) {
         if (lv_tick_elaps(g_last_activity_tick) > timeout_ms)
@@ -1771,58 +1838,4 @@ static void screensaver_timer_cb(lv_timer_t *t) {
     } else {
         screensaver_update();
     }
-}
-
-void create_screen_main(void) {
-    lv_obj_t *scr = lv_obj_create(NULL);
-    objects.main = scr;
-    lv_obj_set_pos(scr, 0, 0);
-    lv_obj_set_size(scr, 800, 480);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG_SCREEN), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    /* Activity detection - jakýkoliv touch resetuje timer */
-    lv_obj_add_event_cb(scr, screen_activity_cb, LV_EVENT_PRESSED, NULL);
-
-    build_header(scr);
-
-    /* Content container 800x370 mezi headerem a nav barem */
-    g_content_container = lv_obj_create(scr);
-    lv_obj_set_pos(g_content_container, 0, 55);
-    lv_obj_set_size(g_content_container, 800, 370);
-    lv_obj_set_style_bg_opa(g_content_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(g_content_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(g_content_container, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_clear_flag(g_content_container, LV_OBJ_FLAG_SCROLLABLE);
-
-    build_nav_bar(scr);
-
-    g_current_screen = 0;
-    g_last_activity_tick = lv_tick_get();
-    show_home_content();
-
-    /* Timer 1x za sekundu - kontroluje auto-return na HOME */
-    lv_timer_create(auto_return_home_timer_cb, 1000, NULL);
-    /* Timer 1x za sekundu - propisuje MQTT data do UI (HOME) */
-    lv_timer_create(ui_data_update_timer_cb, 1000, NULL);
-    /* Timer 2x za sekundu - update KLIMATE/LIGHTS/ENERGY */
-    lv_timer_create(ui_klimate_lights_update_timer_cb, 500, NULL);
-    /* Timer 1x za sekundu - screensaver */
-    lv_timer_create(screensaver_timer_cb, 1000, NULL);
-
-    lv_screen_load(objects.main);
-    tick_screen_main();
-}
-
-void tick_screen_main(void) {
-    /* MQTT live update sem (vola se z main.cpp), zatim prazdne */
-}
-
-typedef void (*tick_screen_func_t)(void);
-static tick_screen_func_t tick_screen_funcs[] = { tick_screen_main };
-
-void tick_screen(int screen_index) { tick_screen_funcs[screen_index](); }
-
-void create_screens(void) {
-    create_screen_main();
 }
